@@ -1,4 +1,4 @@
--- Made by sskint & Demonware Team - Enhanced Pig Feeding & Cooking Automation
+-- Made by sskint & Demonware Team - Enhanced Pig Feeding & Cooking Automation (Final Fixed)
 
 --// Services
 local Players = game:GetService("Players")
@@ -21,12 +21,13 @@ local blacklist = {}
 local feedingInProgress = false
 local sugarAppleCount = 0
 local cookingPaused = false
+local rewardWaitTimer = nil
 
 --// Config save/load
 local configFolder = "AutoCookFarm"
 local configFile = "Config.json"
 local function saveConfig()
-    isfile(configFolder.."/"..configFile) or makefolder(configFolder)
+    if not isfolder(configFolder) then makefolder(configFolder) end
     writefile(configFolder.."/"..configFile, HttpService:JSONEncode({
         webhookURL = webhookURL,
         autoCookEnabled = autoCookEnabled,
@@ -119,16 +120,24 @@ end)
 
 Notification_RE.OnClientEvent:Connect(function(message)
     local lowerMsg = message:lower()
-    if lowerMsg:find("your") and lowerMsg:find("done cooking") then
+
+    -- Pot finished cooking
+    if lowerMsg:find("done cooking") then
         CookingPotService_RE:FireServer("GetFoodFromPot")
+
+    -- Reward from feeding pig
     elseif lowerMsg:find("rewarded") then
         sendWebhook(message)
-        if feedingInProgress then
-            feedingInProgress = false
-            task.delay(5, function()
-                cookingPaused = false
-            end)
+
+        feedingInProgress = false
+        cookingPaused = true
+
+        if rewardWaitTimer then
+            rewardWaitTimer:Disconnect()
         end
+        rewardWaitTimer = task.delay(5, function()
+            cookingPaused = false
+        end)
     end
 end)
 
@@ -136,14 +145,11 @@ end)
 task.spawn(function()
     while task.wait(1) do
         if autoCookEnabled and not cookingPaused then
-            for i = 1, 5 do
-                local appleName = getLowestKGSugarApple()
-                if appleName then
-                    if equipToolByName(appleName) then
-                        CookingPotService_RE:FireServer("SubmitHeldPlant")
-                        task.wait(0.3)
-                    end
-                end
+            local appleName = getLowestKGSugarApple()
+            if appleName then
+                equipToolByName(appleName)
+                CookingPotService_RE:FireServer("SubmitHeldPlant")
+                task.wait(0.3)
             end
         end
     end

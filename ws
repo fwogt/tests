@@ -1,4 +1,4 @@
--- Made by sskint & Demonware Team - Enhanced Pig Feeding & Cooking Automation (Final Fixed)
+-- Made by sskint & Demonware Team - Full Version with UI + Config Save
 
 --// Services
 local Players = game:GetService("Players")
@@ -23,7 +23,7 @@ local sugarAppleCount = 0
 local cookingPaused = false
 local rewardWaitTimer = nil
 
---// Config save/load
+--// Config Save/Load
 local configFolder = "AutoCookFarm"
 local configFile = "Config.json"
 local function saveConfig()
@@ -121,19 +121,15 @@ end)
 Notification_RE.OnClientEvent:Connect(function(message)
     local lowerMsg = message:lower()
 
-    -- Pot finished cooking
     if lowerMsg:find("done cooking") then
         CookingPotService_RE:FireServer("GetFoodFromPot")
 
-    -- Reward from feeding pig
     elseif lowerMsg:find("rewarded") then
         sendWebhook(message)
-
         feedingInProgress = false
         cookingPaused = true
-
         if rewardWaitTimer then
-            rewardWaitTimer:Disconnect()
+            task.cancel(rewardWaitTimer)
         end
         rewardWaitTimer = task.delay(5, function()
             cookingPaused = false
@@ -141,7 +137,7 @@ Notification_RE.OnClientEvent:Connect(function(message)
     end
 end)
 
---// Auto Cook Loop
+--// Loops
 task.spawn(function()
     while task.wait(1) do
         if autoCookEnabled and not cookingPaused then
@@ -155,7 +151,6 @@ task.spawn(function()
     end
 end)
 
---// Auto Feed Loop
 task.spawn(function()
     while task.wait(1) do
         if autoFeedEnabled and not feedingInProgress then
@@ -212,4 +207,35 @@ MainTab:CreateTextbox({
 MainTab:CreateButton({
     Name = "Test Webhook",
     Callback = function() sendWebhook("Test message from Auto Cook Farm!") end
+})
+
+-- Blacklist controls
+MainTab:CreateTextbox({
+    Name = "Add Blacklist Mutation",
+    PlaceholderText = "Enter text to blacklist",
+    RemoveTextAfterFocusLost = true,
+    Callback = function(v)
+        table.insert(blacklist, v)
+        saveConfig()
+    end
+})
+MainTab:CreateTextbox({
+    Name = "Remove Blacklist Mutation",
+    PlaceholderText = "Enter text to remove",
+    RemoveTextAfterFocusLost = true,
+    Callback = function(v)
+        for i, mutation in ipairs(blacklist) do
+            if mutation == v then
+                table.remove(blacklist, i)
+                break
+            end
+        end
+        saveConfig()
+    end
+})
+MainTab:CreateButton({
+    Name = "Show Current Blacklist",
+    Callback = function()
+        sendWebhook("Current Blacklist: " .. table.concat(blacklist, ", "))
+    end
 })

@@ -1,59 +1,29 @@
+-- Made by sskint & Demonware Team | Updated with Smart Pot, Auto Feed, Webhook System
+
 --// Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Backpack = LocalPlayer.Backpack
 
 --// Remotes
 local CookingPotService_RE = ReplicatedStorage.GameEvents.CookingPotService_RE
 local SubmitFoodService_RE = ReplicatedStorage.GameEvents.SubmitFoodService_RE
-local Notification = ReplicatedStorage.GameEvents.Notification
+local Notification_RE = ReplicatedStorage.GameEvents.Notification
 
---// State
+--// State variables
 local autoCookEnabled = false
 local autoClaimEnabled = false
 local autoFeedEnabled = false
 local webhookURL = ""
-local maxKG = 12
 local blacklist = {}
+local maxKG = 12
+
+-- Pot tracking
 local sugarAppleCount = 0
+local waitingToCook = false
 
---// Mutations Table
-local Mutations = {
-    Amber = 10, AncientAmber = 50, Aurora = 90, Bloodlit = 5, Burnt = 4,
-    Celestial = 120, Ceramic = 30, Chakra = 15, Chilled = 2, Choc = 2,
-    Clay = 5, Cloudtouched = 5, Cooked = 10, Dawnbound = 150, Disco = 125,
-    Drenched = 5, Eclipsed = 15, Enlightened = 35, FoxfireChakra = 90,
-    Friendbound = 70, Frozen = 10, Galactic = 120, Gold = 20, Heavenly = 5,
-    HoneyGlazed = 5, Infected = 75, Molten = 25, Moonlit = 2, Meteoric = 125,
-    OldAmber = 20, Paradisal = 100, Plasma = 5, Pollinated = 3, Radioactive = 80,
-    Rainbow = 50, Sandy = 3, Shocked = 100, Sundried = 85, Tempestuous = 19,
-    Toxic = 12, Tranquil = 20, Twisted = 5, Verdant = 5, Voidtouched = 135,
-    Wet = 2, Windstruck = 2, Wiltproof = 4, Zombified = 25
-}
-
---// Helpers
-local function sendWebhook(content)
-    if webhookURL == nil or webhookURL == "" then return end
-    local data = HttpService:JSONEncode({
-        embeds = {{
-            title = "Game Notification",
-            description = content,
-            color = 16753920
-        }}
-    })
-    request = http_request or request or HttpPost or syn.request
-    if request then
-        request({
-            Url = webhookURL,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = data
-        })
-    end
-end
-
+--// Helper Functions
 local function getWeightFromName(name)
     local kg = name:match("%[([%d%.]+)kg%]")
     return kg and tonumber(kg) or math.huge
@@ -92,36 +62,49 @@ local function getLowestKGSugarApple()
     return apples[1] and apples[1].name or nil
 end
 
-local function getFoodMatchingCraving(craving)
+local function getItemsByName(partial)
+    local items = {}
     for _, item in ipairs(Backpack:GetChildren()) do
-        if item:IsA("Tool") and item.Name:lower():find(craving:lower()) then
-            return item.Name
+        if item:IsA("Tool") and item.Name:lower():find(partial:lower()) then
+            table.insert(items, item.Name)
         end
     end
-    return nil
+    return items
+end
+
+local function sendWebhook(msg)
+    if webhookURL ~= "" then
+        local payload = game:GetService("HttpService"):JSONEncode({
+            embeds = {{
+                title = "Game Notification",
+                description = msg,
+                color = 65280
+            }}
+        })
+        request({
+            Url = webhookURL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = payload
+        })
+    end
 end
 
 --// Automation Loops
 task.spawn(function()
     while task.wait(1) do
-        if autoCookEnabled and sugarAppleCount >= 5 then
-            CookingPotService_RE:FireServer("CookBest")
-            sugarAppleCount = 0
-        elseif autoCookEnabled then
-            local appleName = getLowestKGSugarApple()
-            if appleName then
-                if equipToolByName(appleName) then
-                    CookingPotService_RE:FireServer("SubmitHeldPlant")
+        if autoCookEnabled then
+            if not waitingToCook then
+                for i = 1, 5 do
+                    local appleName = getLowestKGSugarApple()
+                    if appleName then
+                        if equipToolByName(appleName) then
+                            CookingPotService_RE:FireServer("SubmitHeldPlant")
+                            task.wait(0.3)
+                        end
+                    end
                 end
             end
-        end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(1) do
-        if autoClaimEnabled then
-            CookingPotService_RE:FireServer("GetFoodFromPot")
         end
     end
 end)
@@ -131,35 +114,56 @@ task.spawn(function()
         if autoFeedEnabled then
             local cravingTextLabel = workspace.CookingEventModel.PigChefFolder.Cravings
                 .CravingThoughtBubblePart.CravingBillboard.BG.CravingTextLabel
-            local craving = cravingTextLabel.Text
-            local foodName = getFoodMatchingCraving(craving)
-            if foodName then
+            local craving = cravingTextLabel.Text:lower()
+
+            local foodList = {}
+            if craving:find("smoothie") then
+                foodList = getItemsByName("smoothie")
+            elseif craving:find("candyapple") then
+                foodList = getItemsByName("candyapple")
+            end
+
+            for _, foodName in ipairs(foodList) do
                 if equipToolByName(foodName) then
                     SubmitFoodService_RE:FireServer("SubmitHeldFood")
+                    task.wait(1)
                 end
             end
         end
     end
 end)
 
---// Remote Listeners
-CookingPotService_RE.OnClientEvent:Connect(function(event, plantName)
-    if event == "PlantAdded" and plantName == "Sugar Apple" then
+--// Pot Fill Tracking
+CookingPotService_RE.OnClientEvent:Connect(function(action, plantName)
+    if action == "PlantAdded" and plantName:lower():find("sugar apple") then
         sugarAppleCount = sugarAppleCount + 1
+        if sugarAppleCount >= 5 then
+            waitingToCook = true
+            task.delay(0.5, function()
+                CookingPotService_RE:FireServer("CookBest")
+                sugarAppleCount = 0
+                waitingToCook = false
+            end)
+        end
     end
 end)
 
-Notification.OnClientEvent:Connect(function(msg)
-    local cleanMsg = msg:gsub("<.->", "") -- strip HTML tags
-    if cleanMsg:lower():find("soup is done cooking") or cleanMsg:lower():find("is done cooking") then
-        CookingPotService_RE:FireServer("GetFoodFromPot")
-    elseif cleanMsg:lower():find("rewarded") then
-        sendWebhook(cleanMsg)
+--// Cooking Done Detection
+Notification_RE.OnClientEvent:Connect(function(message)
+    local lowerMsg = message:lower()
+    if lowerMsg:find("done cooking") then
+        if autoClaimEnabled then
+            CookingPotService_RE:FireServer("GetFoodFromPot")
+        end
+    end
+    if lowerMsg:find("rewarded") then
+        sendWebhook(message)
     end
 end)
 
 --// Rayfield UI
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
 local Window = Rayfield:CreateWindow({
     Name = "Auto Cook Farm | sskint & Demonware",
     LoadingTitle = "Auto Cook Farm",
@@ -183,17 +187,10 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateToggle({
-    Name = "Auto Claim Pot",
+    Name = "Auto Claim Food",
     CurrentValue = false,
     Flag = "AutoClaimToggle",
     Callback = function(v) autoClaimEnabled = v end
-})
-
-MainTab:CreateToggle({
-    Name = "Auto Feed Pig (Smoothie / CandyApple)",
-    CurrentValue = false,
-    Flag = "AutoFeedToggle",
-    Callback = function(v) autoFeedEnabled = v end
 })
 
 MainTab:CreateSlider({
@@ -208,16 +205,24 @@ MainTab:CreateSlider({
 
 MainTab:CreateDropdown({
     Name = "Blacklist Mutations",
-    Options = table.keys(Mutations),
+    Options = {},
     MultipleOptions = true,
     Flag = "BlacklistDropdown",
     Callback = function(v) blacklist = v end
 })
 
+MainTab:CreateToggle({
+    Name = "Auto Feed Pig (Smoothie/CandyApple)",
+    CurrentValue = false,
+    Flag = "AutoFeedToggle",
+    Callback = function(v) autoFeedEnabled = v end
+})
+
 MainTab:CreateInput({
-    Name = "Webhook URL",
-    PlaceholderText = "Enter Discord Webhook",
+    Name = "Discord Webhook URL",
+    PlaceholderText = "Enter your Discord webhook here...",
     RemoveTextAfterFocusLost = false,
+    CurrentValue = webhookURL,
     Flag = "WebhookInput",
     Callback = function(v) webhookURL = v end
 })
@@ -225,6 +230,10 @@ MainTab:CreateInput({
 MainTab:CreateButton({
     Name = "Test Webhook",
     Callback = function()
-        sendWebhook("✅ Webhook test successful!")
+        if webhookURL == nil or webhookURL == "" then
+            warn("Webhook URL is empty!")
+            return
+        end
+        sendWebhook("✅ Webhook test successful! If you see this in Discord, it works.")
     end
 })

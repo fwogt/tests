@@ -1,29 +1,30 @@
--- Made by sskint & Demonware Team - Full Version with UI + Config Save
-
---// Services
+-- Made by sskint & Demonware Team - Enhanced Pig Feeding & Cooking Automation (Fixed UI + Auto Claim)
+-- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Backpack = LocalPlayer.Backpack
 
---// Remotes
+-- Remotes
 local CookingPotService_RE = ReplicatedStorage.GameEvents.CookingPotService_RE
 local SubmitFoodService_RE = ReplicatedStorage.GameEvents.SubmitFoodService_RE
 local Notification_RE = ReplicatedStorage.GameEvents.Notification
+-- Replace "ActualRemoteName" with the real reward claim remote after testing
+local ClaimReward_RE = ReplicatedStorage.GameEvents:FindFirstChild("ActualRemoteName")
 
---// State
+-- State
 local autoCookEnabled = false
 local autoFeedEnabled = false
+local autoClaimEnabled = false
 local webhookURL = ""
 local maxKG = 12
 local blacklist = {}
 local feedingInProgress = false
 local sugarAppleCount = 0
 local cookingPaused = false
-local rewardWaitTimer = nil
 
---// Config Save/Load
+-- Config save/load
 local configFolder = "AutoCookFarm"
 local configFile = "Config.json"
 local function saveConfig()
@@ -32,6 +33,7 @@ local function saveConfig()
         webhookURL = webhookURL,
         autoCookEnabled = autoCookEnabled,
         autoFeedEnabled = autoFeedEnabled,
+        autoClaimEnabled = autoClaimEnabled,
         maxKG = maxKG,
         blacklist = blacklist
     }))
@@ -42,13 +44,14 @@ local function loadConfig()
         webhookURL = data.webhookURL or ""
         autoCookEnabled = data.autoCookEnabled or false
         autoFeedEnabled = data.autoFeedEnabled or false
+        autoClaimEnabled = data.autoClaimEnabled or false
         maxKG = data.maxKG or 12
         blacklist = data.blacklist or {}
     end
 end
 loadConfig()
 
---// Helpers
+-- Helpers
 local function getWeightFromName(name)
     local kg = name:match("%[([%d%.]+)kg%]")
     return kg and tonumber(kg) or math.huge
@@ -94,7 +97,7 @@ local function getFoodMatchingCraving(craving)
     return nil
 end
 
---// Webhook
+-- Webhook
 local function sendWebhook(content)
     if webhookURL == "" then return end
     local payload = HttpService:JSONEncode({
@@ -107,7 +110,7 @@ local function sendWebhook(content)
     request({Url = webhookURL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
 end
 
---// Event Listeners
+-- Event Listeners
 CookingPotService_RE.OnClientEvent:Connect(function(action, plantName)
     if action == "PlantAdded" and plantName == "Sugar Apple" then
         sugarAppleCount += 1
@@ -120,37 +123,40 @@ end)
 
 Notification_RE.OnClientEvent:Connect(function(message)
     local lowerMsg = message:lower()
-
-    if lowerMsg:find("done cooking") then
+    if lowerMsg:find("your") and lowerMsg:find("done cooking") then
         CookingPotService_RE:FireServer("GetFoodFromPot")
-
     elseif lowerMsg:find("rewarded") then
         sendWebhook(message)
-        feedingInProgress = false
-        cookingPaused = true
-        if rewardWaitTimer then
-            task.cancel(rewardWaitTimer)
+        if autoClaimEnabled and ClaimReward_RE then
+            ClaimReward_RE:FireServer()
         end
-        rewardWaitTimer = task.delay(5, function()
-            cookingPaused = false
-        end)
+        if feedingInProgress then
+            feedingInProgress = false
+            task.delay(5, function()
+                cookingPaused = false
+            end)
+        end
     end
 end)
 
---// Loops
+-- Auto Cook Loop
 task.spawn(function()
     while task.wait(1) do
         if autoCookEnabled and not cookingPaused then
-            local appleName = getLowestKGSugarApple()
-            if appleName then
-                equipToolByName(appleName)
-                CookingPotService_RE:FireServer("SubmitHeldPlant")
-                task.wait(0.3)
+            for i = 1, 5 do
+                local appleName = getLowestKGSugarApple()
+                if appleName then
+                    if equipToolByName(appleName) then
+                        CookingPotService_RE:FireServer("SubmitHeldPlant")
+                        task.wait(0.3)
+                    end
+                end
             end
         end
     end
 end)
 
+-- Auto Feed Loop
 task.spawn(function()
     while task.wait(1) do
         if autoFeedEnabled and not feedingInProgress then
@@ -170,7 +176,7 @@ task.spawn(function()
     end
 end)
 
---// UI
+-- UI
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local Window = Rayfield:CreateWindow({
     Name = "Auto Cook Farm | sskint & Demonware",
@@ -190,6 +196,11 @@ MainTab:CreateToggle({
     CurrentValue = autoFeedEnabled,
     Callback = function(v) autoFeedEnabled = v saveConfig() end
 })
+MainTab:CreateToggle({
+    Name = "Auto Claim Rewards",
+    CurrentValue = autoClaimEnabled,
+    Callback = function(v) autoClaimEnabled = v saveConfig() end
+})
 MainTab:CreateSlider({
     Name = "Max KG for Sugar Apples",
     Range = {1, 50},
@@ -198,44 +209,14 @@ MainTab:CreateSlider({
     CurrentValue = maxKG,
     Callback = function(v) maxKG = v saveConfig() end
 })
-MainTab:CreateTextbox({
+MainTab:CreateInput({
     Name = "Webhook URL",
     PlaceholderText = "Enter Discord Webhook URL",
     RemoveTextAfterFocusLost = false,
+    CurrentValue = webhookURL,
     Callback = function(v) webhookURL = v saveConfig() end
 })
 MainTab:CreateButton({
     Name = "Test Webhook",
     Callback = function() sendWebhook("Test message from Auto Cook Farm!") end
-})
-
--- Blacklist controls
-MainTab:CreateTextbox({
-    Name = "Add Blacklist Mutation",
-    PlaceholderText = "Enter text to blacklist",
-    RemoveTextAfterFocusLost = true,
-    Callback = function(v)
-        table.insert(blacklist, v)
-        saveConfig()
-    end
-})
-MainTab:CreateTextbox({
-    Name = "Remove Blacklist Mutation",
-    PlaceholderText = "Enter text to remove",
-    RemoveTextAfterFocusLost = true,
-    Callback = function(v)
-        for i, mutation in ipairs(blacklist) do
-            if mutation == v then
-                table.remove(blacklist, i)
-                break
-            end
-        end
-        saveConfig()
-    end
-})
-MainTab:CreateButton({
-    Name = "Show Current Blacklist",
-    Callback = function()
-        sendWebhook("Current Blacklist: " .. table.concat(blacklist, ", "))
-    end
 })
